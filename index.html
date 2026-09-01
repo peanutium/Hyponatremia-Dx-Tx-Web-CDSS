@@ -33,6 +33,9 @@
         
         button { background-color: #800020; color: #ffffff; border: none; padding: 15px 20px; font-size: 16px; font-weight: bold; cursor: pointer; width: 100%; transition: background-color 0.2s; margin-top: 10px; }
         button:hover { background-color: #5a0016; }
+        
+        .btn-secondary { background-color: #666666; padding: 10px 15px; font-size: 14px; margin-top: 0; width: auto; }
+        .btn-secondary:hover { background-color: #444444; }
 
         /* Tooltip implementation */
         .tooltip-container { position: relative; display: inline-flex; align-items: center; margin-left: 6px; }
@@ -55,6 +58,13 @@
         .card-management { border-top: 5px solid #800020; border-left: 1px solid #dddddd; background-color: #fafafa; }
         .card-siad { border-left-color: #4CAF50; background-color: #f1f8e9; }
         .card-siad h3 { color: #2E7D32; }
+
+        /* Usage Statistics Panel */
+        .stats-panel { margin-top: 40px; padding: 20px; background-color: #f9f9f9; border: 1px solid #dddddd; }
+        .stats-controls { display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 15px; }
+        .stats-output { font-size: 14px; background: #fff; padding: 15px; border: 1px solid #ddd; }
+        .stats-output strong { color: #800020; font-size: 18px; }
+        .loading-text { font-style: italic; color: #666; }
 
         /* Footer */
         .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #eeeeee; font-size: 12px; color: #a0a0a0; }
@@ -189,6 +199,28 @@
         <div id="results-output"></div>
     </div>
 
+    <!-- Usage Statistics Section -->
+    <div class="stats-panel">
+        <h2>Global Usage Statistics</h2>
+        <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Tracks the number of times this tool has been successfully executed worldwide.</p>
+        
+        <div class="stats-controls">
+            <div class="form-group" style="width: 150px;">
+                <label for="statStart">Start Date</label>
+                <input type="date" id="statStart">
+            </div>
+            <div class="form-group" style="width: 150px;">
+                <label for="statEnd">End Date</label>
+                <input type="date" id="statEnd">
+            </div>
+            <button type="button" class="btn-secondary" onclick="calculateGlobalStats()">Calculate Range</button>
+        </div>
+
+        <div class="stats-output" id="stats-output-text">
+            Total global CDSS usages: <strong id="total-usage-count" class="loading-text">Loading...</strong>
+        </div>
+    </div>
+
     <div class="footer">
         <p><strong>Disclaimer:</strong> For suggestions and education to health care professionals only. Clinical diagnosis requires clinician jurisdication.</p>
         <h3>References:</h3>
@@ -206,13 +238,18 @@
 </div>
 
 <script>
-    // Helper function to safely parse numbers
+    // =========================================================================
+    // CONFIGURATION: INSERT YOUR FIREBASE DATABASE URL HERE
+    // Example: "https://my-cdss-project-default-rtdb.firebaseio.com"
+    // Leave without trailing slash.
+    // =========================================================================
+    const DATABASE_URL = "https://hyponatremia-dx-tx-web-cdss-default-rtdb.firebaseio.com"; 
+
+    // Helper functions
     function getVal(id) {
         const val = document.getElementById(id).value;
         return val === "" ? NaN : parseFloat(val);
     }
-
-    // Helper function to safely parse strings
     function getStr(id) {
         return document.getElementById(id).value;
     }
@@ -231,11 +268,96 @@
                 </div>`;
     }
 
-    // Core Rule Engine
+    // =========================================================================
+    // GLOBAL USAGE STATISTICS LOGIC via REST API
+    // =========================================================================
+    
+    async function fetchAllUsages() {
+        if (!DATABASE_URL) return [];
+        try {
+            const response = await fetch(`${DATABASE_URL}/usages.json`);
+            if (!response.ok) throw new Error("Network response was not ok");
+            const data = await response.json();
+            if (!data) return [];
+            return Object.values(data).map(item => item.timestamp);
+        } catch (error) {
+            console.error("Failed to fetch global usage:", error);
+            return [];
+        }
+    }
+
+    async function logGlobalUsage() {
+        if (!DATABASE_URL) {
+            console.warn("Global tracking disabled: DATABASE_URL is empty.");
+            return;
+        }
+        try {
+            await fetch(`${DATABASE_URL}/usages.json`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ timestamp: new Date().toISOString() })
+            });
+            updateOverallTotalGlobal(); // Refresh UI after logging
+        } catch (error) {
+            console.error("Failed to log usage:", error);
+        }
+    }
+
+    async function updateOverallTotalGlobal() {
+        const countSpan = document.getElementById('total-usage-count');
+        if (!DATABASE_URL) {
+            countSpan.innerText = "Tracking Offline (No Database URL provided)";
+            countSpan.className = "";
+            return;
+        }
+        
+        const logs = await fetchAllUsages();
+        countSpan.innerText = logs.length;
+        countSpan.className = "";
+    }
+
+    async function calculateGlobalStats() {
+        const startStr = document.getElementById('statStart').value;
+        const endStr = document.getElementById('statEnd').value;
+        const outputDiv = document.getElementById('stats-output-text');
+        
+        if (!DATABASE_URL) {
+            outputDiv.innerHTML = `<span style="color:#d9534f;">Global tracking is currently disabled (No Database URL provided).</span>`;
+            return;
+        }
+
+        const logs = await fetchAllUsages();
+
+        if (!startStr || !endStr) {
+            outputDiv.innerHTML = `Total global CDSS usages: <strong>${logs.length}</strong><br><br><span style="color:#d9534f;">Please select both a Start Date and an End Date.</span>`;
+            return;
+        }
+
+        // Set times to cover full days
+        const startDate = new Date(startStr + 'T00:00:00');
+        const endDate = new Date(endStr + 'T23:59:59');
+
+        const filteredCount = logs.filter(dateStr => {
+            const logDate = new Date(dateStr);
+            return logDate >= startDate && logDate <= endDate;
+        }).length;
+
+        outputDiv.innerHTML = `Total global CDSS usages: <strong>${logs.length}</strong><br>
+                               Usages between ${startStr} and ${endStr}: <strong style="color: #2E7D32;">${filteredCount}</strong>`;
+    }
+
+    // Initialize stats counter on page load
+    window.onload = updateOverallTotalGlobal;
+
+    // =========================================================================
+    // CORE CLINICAL RULE ENGINE
+    // =========================================================================
+    
     function runRuleEngine() {
         const outputDiv = document.getElementById('results-output');
         document.getElementById('results-container').style.display = 'block';
         let html = '';
+        let classificationSuccessful = false;
 
         // Capture Mandatory Inputs
         const severity = getStr('symptomSeverity');
@@ -269,14 +391,18 @@
             return;
         }
 
+        classificationSuccessful = true; // Mark as a valid execution for logging
+
         // STEP 1: TONICITY
         if (sOsm > 295) {
             html += generateCard("1. Confirm Tonicity: Hypertonic / Translocational", `Measured serum Osm usually > 295 mOsm/kg.<br><b>Common causes:</b> Hyperglycemia. Also mannitol, glycine/sorbitol or other effective osmoles.<br><b>Action:</b> Treat the osmole/cause; use glucose-corrected Na+ to interpret water balance. Do not manage as hypotonic hyponatremia.`, "normal");
             outputDiv.innerHTML = html;
+            if(classificationSuccessful) logGlobalUsage();
             return;
         } else if (sOsm >= 275 && sOsm <= 295) {
             html += generateCard("1. Confirm Tonicity: Isotonic / Pseudohyponatremia", "Measured serum Osm about 275-295 mOsm/kg.<br>Low indirect-ISE Na+. Consider severe hypertriglyceridemia or paraproteinemia.<br><b>Action:</b> Confirm with direct ISE/blood-gas Na+; measure lipids and total protein/electrophoresis as indicated.", "normal");
             outputDiv.innerHTML = html;
+            if(classificationSuccessful) logGlobalUsage();
             return;
         }
         
@@ -294,6 +420,7 @@
         if (uOsm <= 100) {
             html += generateCard("3. Urine Osmolality (UOsm): <= 100 mOsm/kg", "<b>AVP appropriately suppressed.</b><br>Excess water relative to solute excretion.<br><b>Common causes:</b> Primary polydipsia / iatrogenic water intake. Low-solute intake (beer potomania, \"tea and toast\"). Reset physiology may coexist.<br><br><b>Action:</b> Quantify fluid and dietary solute intake, urine volume, and nutrition/alcohol history. Watch for brisk aquaresis and rapid spontaneous correction after solute is restored.", "management");
             outputDiv.innerHTML = html;
+            if(classificationSuccessful) logGlobalUsage();
             return;
         }
 
@@ -400,6 +527,7 @@
         }
 
         outputDiv.innerHTML = html;
+        if(classificationSuccessful) logGlobalUsage();
     }
 </script>
 
